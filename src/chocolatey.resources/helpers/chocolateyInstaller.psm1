@@ -32,7 +32,7 @@ $packageParameters = $env:chocolateyPackageParameters
 # ensure module loading preference is on
 $PSModuleAutoLoadingPreference = "All";
 
-Write-Debug "PowerShell Version is '$($PSVersionTable.PSVersion)' and CLR Version is '$($PSVersionTable.CLRVersion)'."
+Write-Debug "Host version is $($host.Version), PowerShell Version is '$($PSVersionTable.PSVersion)' and CLR Version is '$($PSVersionTable.CLRVersion)'."
 
 # grab functions from files
 Get-Item $helpersPath\functions\*.ps1 |
@@ -51,7 +51,8 @@ if (Test-Path($extensionsPath)) {
   Get-ChildItem $extensionsPath -recurse -filter "*.dll" | Select -ExpandProperty FullName | % { 
     $path = $_;
     try {
-      Write-Debug "Importing '$path'"; 
+      Write-Debug "Importing '$path'";
+      Write-Host "Loading '$([System.IO.Path]::GetFileNameWithoutExtension($path))' extension."; 
       Import-Module $path; 
     } catch {
       if ($env:ChocolateyPowerShellHost -eq 'true') {

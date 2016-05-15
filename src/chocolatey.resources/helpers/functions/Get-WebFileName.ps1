@@ -13,22 +13,28 @@
 # limitations under the License.
 #
 # Based on http://stackoverflow.com/a/13571471/18475
-function Get-FileName {
+function Get-WebFileName {
 param(
   [string]$url = '',
   [string]$defaultName,
   $userAgent = 'chocolatey command line'
 )
 
-  Write-Debug "Running 'Get-FileName' to determine name with url:'$url', defaultName:'$defaultName'";
+  Write-Debug "Running 'Get-WebFileName' to determine name with url:'$url', defaultName:'$defaultName'";
 
   $originalFileName = $defaultName
   $fileName = $null
 
+  if ($url -eq $null -or $url -eq '') {
+    Write-Debug "Url was null, using default name."
+    return $originalFileName
+  }
+
   $request = [System.Net.HttpWebRequest]::Create($url)
   if ($request -eq $null) { 
     $request.Close()
-    return $originalFileName 
+    Write-Debug "Request was null, using default name."
+    return $originalFileName
   }
 
   $defaultCreds = [System.Net.CredentialCache]::DefaultCredentials
@@ -86,11 +92,12 @@ param(
   try
   {
     [System.Net.HttpWebResponse]$response = $request.GetResponse()
-    if ($response -eq $null) { 
-      $response.Close() 
-      return $originalFileName 
+    if ($response -eq $null) {
+      $response.Close()
+      Write-Debug "Response was null, using default name."
+      return $originalFileName
     }
-    
+
     [string]$header = $response.Headers['Content-Disposition']
     [string]$headerLocation = $response.Headers['Location']
     
@@ -99,6 +106,7 @@ param(
       $fileHeaderName = 'filename='
       $index = $header.LastIndexOf($fileHeaderName, [StringComparison]::OrdinalIgnoreCase)
       if ($index -gt -1) {
+        Write-Debug "Using header 'Content-Disposition' to determine file name."
         $fileName = $header.Substring($index + $fileHeaderName.Length).Replace('"', '')
       }
     }
@@ -106,36 +114,60 @@ param(
     # If empty, check location header next
     if ($fileName -eq $null -or  $fileName -eq '') {
       if ($headerLocation -ne '') {
+        Write-Debug "Using header 'Location' to determine file name."
         $fileName = [System.IO.Path]::GetFileName($headerLocation)
       }
     }
 
+    #$containsQuery = [System.IO.Path]::GetFileName($url).Contains('?')
+    #$containsEquals = [System.IO.Path]::GetFileName($url).Contains('=')
+
     # Next comes using the response url value
     if ($fileName -eq $null -or  $fileName -eq '') {
-      $containsQuery = [System.IO.Path]::GetFileName($url).Contains('?')
-      $containsEquals = [System.IO.Path]::GetFileName($url).Contains('=')
-      $fileName = [System.IO.Path]::GetFileName($response.ResponseUri.ToString()) 
+      $responseUrl = $response.ResponseUri.ToString()
+      if (!$responseUrl.Contains('?')) {
+        Write-Debug "Using response url to determine file name. '$responseUrl'"
+        $fileName = [System.IO.Path]::GetFileName($responseUrl) 
+      }
     }
-    
-    $response.Close()
-    $response.Dispose()
-    
-    [System.Text.RegularExpressions.Regex]$containsABadCharacter = New-Object Regex("[" + [System.Text.RegularExpressions.Regex]::Escape([System.IO.Path]::GetInvalidFileNameChars()) + "]");
-    
+
+    # Next comes using the request url value
+    if ($fileName -eq $null -or  $fileName -eq '') {
+      $requestUrl = $url
+      $extension = [System.IO.Path]::GetExtension($requestUrl)
+      if (!$requestUrl.Contains('?') -and $extension -ne $null -and $extension -ne '') {
+        Write-Debug "Using request url to determine file name. ' $requestUrl'"
+        $fileName = [System.IO.Path]::GetFileName($requestUrl) 
+      }
+    }
+
+    [System.Text.RegularExpressions.Regex]$containsABadCharacter = New-Object Regex("[" + [System.Text.RegularExpressions.Regex]::Escape([System.IO.Path]::GetInvalidFileNameChars()) + "]", [System.Text.RegularExpressions.RegexOptions]::IgnorePatternWhitespace);
+
     # when all else fails, default the name
     if ($fileName -eq $null -or  $fileName -eq '' -or $containsABadCharacter.IsMatch($fileName)) {
+      Write-Debug "File name is null or illegal. Using $originalFileName instead."
       $fileName = $originalFileName
     }
     
     Write-Debug "File name determined from url is '$fileName'"
     
     return $fileName
-  } catch
-  {
-    $request.ServicePoint.MaxIdleTime = 0
-    $request.Abort();
+  } catch {
+    if ($request -ne $null) {
+      $request.ServicePoint.MaxIdleTime = 0
+      $request.Abort();
+      # ruthlessly remove $request to ensure it isn't reused
+      Remove-Variable request
+      Start-Sleep 1
+      [GC]::Collect()
+    }
+    
     Write-Debug "Url request/response failed - file name will be '$originalFileName':  $($_)"
     
     return $originalFileName
+  } finally {
+   if ($response -ne $null) {
+      $response.Close();
+    }
   }
 }
